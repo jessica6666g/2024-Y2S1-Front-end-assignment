@@ -1,1 +1,1 @@
-Marvelous Malaysia is a comprehensive travel blog website designed to showcase the beauty, culture, and adventures that Malaysia has to offer. This project was developed as part of UCCD2323 Front-End Web Development course at Universiti Tunku Abdul Rahman (UTAR).
+Marvelous Malaysia is a travel website designed to showcase the beauty, culture, and adventures that Malaysia has to offer. This project was developed as part of UCCD2323 Front-End Web Development course at Universiti Tunku Abdul Rahman (UTAR).

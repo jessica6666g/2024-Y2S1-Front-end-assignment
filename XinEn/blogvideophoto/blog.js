@@ -2,7 +2,7 @@
 class UnsplashImageManager {
     constructor() {
         // Your Unsplash API credentials - Replace with your actual keys from the dashboard
-        this.accessKey = 'YOUR_ACCESS_KEY_HERE'; // Replace with your Access Key from Unsplash dashboard
+        this.accessKey = 'N4sQoVRKOOfE9rXQO-QGU0W7Ez7XHvVdU-JMRjmxEbk'; // Replace with your Access Key from Unsplash dashboard
         this.baseURL = 'https://api.unsplash.com';
         this.cache = new Map(); // Cache images to avoid repeated API calls
     }
@@ -118,6 +118,7 @@ class BlogManager {
         this.loadingImages = new Set();
         this.selectedImageAttribution = null;
         this.autoSaveInterval = null;
+        this.saveIndicatorTimeout = null; // Add timeout tracking
         this.init();
     }
 
@@ -286,12 +287,12 @@ class BlogManager {
      * Enhanced auto-save functionality with real-time saving
      */
     setupEnhancedAutoSave() {
-        // Save every 2 seconds while user is typing
+        // Save every 5 seconds while user is typing (increased from 2 seconds)
         this.autoSaveInterval = setInterval(() => {
             if (this.currentEditIndex === null) { // Only for new posts
                 this.saveFormDraft();
             }
-        }, 2000);
+        }, 5000); // Changed from 2000 to 5000ms
         
         // Warning before page unload/refresh to prevent data loss
         window.addEventListener('beforeunload', (e) => {
@@ -317,7 +318,7 @@ class BlogManager {
         formFields.forEach(fieldId => {
             const field = document.getElementById(fieldId);
             if (field) {
-                // Save data when user types (with debouncing)
+                // Save data when user types (with longer debouncing)
                 let saveTimeout;
                 field.oninput = (e) => {
                     clearTimeout(saveTimeout);
@@ -325,22 +326,20 @@ class BlogManager {
                         if (this.currentEditIndex === null) {
                             this.saveFormDraft();
                         }
-                    }, 500);
+                    }, 2000); // Increased from 500ms to 2000ms
                     
                     if (fieldId === 'postExcerpt') this.updateWordCount(e);
                 };
                 
-                field.onchange = () => {
-                    if (this.currentEditIndex === null) {
-                        this.saveFormDraft();
-                    }
-                };
-                
-                // Save on focus out
+                // Save on focus out - remove immediate save
                 field.onblur = () => {
-                    if (this.currentEditIndex === null) {
-                        this.saveFormDraft();
-                    }
+                    // Only save on blur if user has been typing for a while
+                    clearTimeout(saveTimeout);
+                    saveTimeout = setTimeout(() => {
+                        if (this.currentEditIndex === null) {
+                            this.saveFormDraft();
+                        }
+                    }, 1000);
                 };
             }
         });
@@ -349,6 +348,9 @@ class BlogManager {
     saveFormDraft() {
         // Only save draft for new posts, not edits
         if (this.currentEditIndex !== null) return;
+        
+        // Check if there are actually any changes to save
+        if (!this.hasUnsavedChanges()) return;
         
         const formData = {
             authorName: document.getElementById('authorName')?.value || '',
@@ -359,6 +361,11 @@ class BlogManager {
             savedAt: new Date().toISOString(),
             selectedImageAttribution: this.selectedImageAttribution
         };
+        
+        // Check if data has actually changed from last save
+        if (this.formDraft && JSON.stringify(formData) === JSON.stringify({...this.formDraft, savedAt: this.formDraft.savedAt})) {
+            return; // No changes, don't save
+        }
         
         // Also save image if it exists
         const imagePreview = document.getElementById('previewImg');
@@ -373,17 +380,21 @@ class BlogManager {
         if (typeof Storage !== 'undefined' && window.sessionStorage) {
             try {
                 sessionStorage.setItem('blogFormDraft', JSON.stringify(formData));
-                console.log('📁 Draft saved to sessionStorage');
+                console.log('📁 Draft saved to sessionStorage (silent)');
             } catch (e) {
                 console.log('⚠️ SessionStorage not available, using memory only');
             }
         }
         
-        // Show subtle save indicator
-        this.showSaveIndicator();
+        // NO SAVE INDICATOR - silent saving in background
     }
 
     showSaveIndicator() {
+        // Prevent multiple indicators from showing
+        if (this.saveIndicatorTimeout) {
+            clearTimeout(this.saveIndicatorTimeout);
+        }
+        
         let indicator = document.getElementById('autoSaveIndicator');
         if (!indicator) {
             indicator = document.createElement('div');
@@ -407,9 +418,14 @@ class BlogManager {
             document.body.appendChild(indicator);
         }
         
+        // Show indicator
         indicator.style.opacity = '1';
-        setTimeout(() => {
-            indicator.style.opacity = '0';
+        
+        // Hide after 1.5 seconds
+        this.saveIndicatorTimeout = setTimeout(() => {
+            if (indicator) {
+                indicator.style.opacity = '0';
+            }
         }, 1500);
     }
 

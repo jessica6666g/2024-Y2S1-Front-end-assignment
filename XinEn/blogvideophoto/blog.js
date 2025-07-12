@@ -1,4 +1,4 @@
-// Unsplash API Integration for Blog Manager
+// Unsplash API Integration for Blog Manager using jQuery AJAX
 class UnsplashImageManager {
     constructor() {
         // Your Unsplash API credentials - Replace with your actual keys from the dashboard
@@ -8,7 +8,7 @@ class UnsplashImageManager {
     }
 
     /**
-     * Search for images on Unsplash based on query
+     * Search for images on Unsplash using jQuery AJAX
      * @param {string} query - Search query
      * @param {number} count - Number of images to fetch (default: 1)
      * @returns {Promise<Array>} Array of image objects
@@ -20,55 +20,69 @@ class UnsplashImageManager {
             return this.cache.get(cacheKey);
         }
 
-        try {
-            const response = await fetch(
-                `${this.baseURL}/search/photos?query=${encodeURIComponent(query)}&per_page=${count}&orientation=landscape`,
-                {
-                    headers: {
-                        'Authorization': `Client-ID ${this.accessKey}`
+        return new Promise((resolve, reject) => {
+            $.ajax({
+                url: `${this.baseURL}/search/photos`,
+                method: 'GET',
+                headers: {
+                    'Authorization': `Client-ID ${this.accessKey}`
+                },
+                data: {
+                    query: query,
+                    per_page: count,
+                    orientation: 'landscape'
+                },
+                success: (data) => {
+                    try {
+                        const images = data.results.map(photo => ({
+                            id: photo.id,
+                            url: photo.urls.regular,
+                            thumb: photo.urls.thumb,
+                            alt: photo.alt_description || query,
+                            photographer: photo.user.name,
+                            photographerUrl: photo.user.links.html,
+                            downloadUrl: photo.links.download_location,
+                            unsplashUrl: photo.links.html
+                        }));
+
+                        // Cache the results
+                        this.cache.set(cacheKey, images);
+                        resolve(images);
+                    } catch (error) {
+                        console.error('Error processing Unsplash data:', error);
+                        resolve([]);
                     }
+                },
+                error: (xhr, status, error) => {
+                    console.error('jQuery AJAX Error fetching images from Unsplash:', error);
+                    resolve([]);
                 }
-            );
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
-            const images = data.results.map(photo => ({
-                id: photo.id,
-                url: photo.urls.regular,
-                thumb: photo.urls.thumb,
-                alt: photo.alt_description || query,
-                photographer: photo.user.name,
-                photographerUrl: photo.user.links.html,
-                downloadUrl: photo.links.download_location,
-                unsplashUrl: photo.links.html
-            }));
-
-            // Cache the results
-            this.cache.set(cacheKey, images);
-            return images;
-        } catch (error) {
-            console.error('Error fetching images from Unsplash:', error);
-            return [];
-        }
+            });
+        });
     }
 
     /**
-     * Trigger download event (required by Unsplash API)
+     * Trigger download event using jQuery AJAX (required by Unsplash API)
      * @param {string} downloadUrl - Download URL from image object
      */
     async triggerDownload(downloadUrl) {
-        try {
-            await fetch(downloadUrl, {
+        return new Promise((resolve, reject) => {
+            $.ajax({
+                url: downloadUrl,
+                method: 'GET',
                 headers: {
                     'Authorization': `Client-ID ${this.accessKey}`
+                },
+                success: () => {
+                    console.log('Download tracked via jQuery AJAX');
+                    resolve();
+                },
+                error: (xhr, status, error) => {
+                    console.error('Error triggering download:', error);
+                    resolve(); // Don't fail on download tracking errors
                 }
             });
-        } catch (error) {
-            console.error('Error triggering download:', error);
-        }
+        });
     }
 
     /**
@@ -115,30 +129,18 @@ class BlogManager {
         this.currentPostType = '';
         this.currentPostId = '';
         this.unsplashManager = new UnsplashImageManager();
-        this.loadingImages = new Set();
         this.selectedImageAttribution = null;
-        this.autoSaveInterval = null;
-        this.saveIndicatorTimeout = null; // Add timeout tracking
         this.init();
     }
 
     async init() {
         console.log('🚀 Initializing BlogManager...');
-        await this.loadFloatingImages();
         this.renderPosts();
         this.setupEventListeners();
         this.updateStats();
         this.setupMobileMenu();
         this.loadStoredData();
-        
-        // Load dynamic images for existing posts
-        await this.loadDynamicImagesForPosts();
-        
-        // Setup image suggestion for new posts
-        this.setupImageSuggestion();
-        
-        // Setup enhanced auto-save
-        this.setupEnhancedAutoSave();
+        this.setupFormAutoSave();
         console.log('✅ BlogManager initialized successfully');
     }
 
@@ -232,10 +234,9 @@ class BlogManager {
             };
         }
         
-        // FIXED: Form submit handler with detailed logging
+        // Form submit handler
         blogForm.addEventListener('submit', (e) => {
             console.log('🚀 FORM SUBMIT EVENT TRIGGERED!');
-            console.log('Event object:', e);
             this.handleSubmit(e);
         });
         
@@ -277,39 +278,7 @@ class BlogManager {
             }
         };
         
-        // Setup enhanced auto-save for form inputs
-        this.setupFormAutoSave();
-        
         console.log('✅ Event listeners setup complete');
-    }
-
-    /**
-     * Enhanced auto-save functionality with real-time saving
-     */
-    setupEnhancedAutoSave() {
-        // Save every 5 seconds while user is typing (increased from 2 seconds)
-        this.autoSaveInterval = setInterval(() => {
-            if (this.currentEditIndex === null) { // Only for new posts
-                this.saveFormDraft();
-            }
-        }, 5000); // Changed from 2000 to 5000ms
-        
-        // Warning before page unload/refresh to prevent data loss
-        window.addEventListener('beforeunload', (e) => {
-            if (this.currentEditIndex === null && this.hasUnsavedChanges()) {
-                // Show browser warning about unsaved changes
-                e.preventDefault();
-                e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
-                return e.returnValue;
-            }
-        });
-        
-        // Save on page visibility change (tab switch)
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden && this.currentEditIndex === null) {
-                this.saveFormDraft();
-            }
-        });
     }
 
     setupFormAutoSave() {
@@ -318,7 +287,6 @@ class BlogManager {
         formFields.forEach(fieldId => {
             const field = document.getElementById(fieldId);
             if (field) {
-                // Save data when user types (with longer debouncing)
                 let saveTimeout;
                 field.oninput = (e) => {
                     clearTimeout(saveTimeout);
@@ -326,14 +294,12 @@ class BlogManager {
                         if (this.currentEditIndex === null) {
                             this.saveFormDraft();
                         }
-                    }, 2000); // Increased from 500ms to 2000ms
+                    }, 2000);
                     
                     if (fieldId === 'postExcerpt') this.updateWordCount(e);
                 };
                 
-                // Save on focus out - remove immediate save
                 field.onblur = () => {
-                    // Only save on blur if user has been typing for a while
                     clearTimeout(saveTimeout);
                     saveTimeout = setTimeout(() => {
                         if (this.currentEditIndex === null) {
@@ -373,60 +339,18 @@ class BlogManager {
             formData.previewImageSrc = imagePreview.src;
         }
         
-        // Store in memory ONLY - NO localStorage (not supported in Claude.ai)
+        // Store in memory ONLY
         this.formDraft = formData;
         
-        // Try to use sessionStorage if available (for local development)
+        // Try to use sessionStorage if available
         if (typeof Storage !== 'undefined' && window.sessionStorage) {
             try {
                 sessionStorage.setItem('blogFormDraft', JSON.stringify(formData));
-                console.log('📁 Draft saved to sessionStorage (silent)');
+                console.log('📁 Draft saved to sessionStorage');
             } catch (e) {
                 console.log('⚠️ SessionStorage not available, using memory only');
             }
         }
-        
-        // NO SAVE INDICATOR - silent saving in background
-    }
-
-    showSaveIndicator() {
-        // Prevent multiple indicators from showing
-        if (this.saveIndicatorTimeout) {
-            clearTimeout(this.saveIndicatorTimeout);
-        }
-        
-        let indicator = document.getElementById('autoSaveIndicator');
-        if (!indicator) {
-            indicator = document.createElement('div');
-            indicator.id = 'autoSaveIndicator';
-            indicator.style.cssText = `
-                position: fixed;
-                top: 10px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: #10b981;
-                color: white;
-                padding: 5px 15px;
-                border-radius: 15px;
-                font-size: 12px;
-                z-index: 10001;
-                opacity: 0;
-                transition: opacity 0.3s ease;
-                pointer-events: none;
-            `;
-            indicator.innerHTML = '<i class="fas fa-check"></i> Draft saved';
-            document.body.appendChild(indicator);
-        }
-        
-        // Show indicator
-        indicator.style.opacity = '1';
-        
-        // Hide after 1.5 seconds
-        this.saveIndicatorTimeout = setTimeout(() => {
-            if (indicator) {
-                indicator.style.opacity = '0';
-            }
-        }, 1500);
     }
 
     loadFormDraft() {
@@ -532,12 +456,6 @@ class BlogManager {
             this.updateWordCount({ target: { value: '' } });
         }
         
-        // Hide image suggestions when opening modal
-        const suggestionContainer = document.getElementById('imageSuggestions');
-        if (suggestionContainer) {
-            suggestionContainer.style.display = 'none';
-        }
-        
         const postModal = document.getElementById('postModal');
         if (postModal) {
             postModal.style.display = 'block';
@@ -589,12 +507,6 @@ class BlogManager {
             if (postImage) postImage.required = true;
         }
         
-        // Hide image suggestions when editing
-        const suggestionContainer = document.getElementById('imageSuggestions');
-        if (suggestionContainer) {
-            suggestionContainer.style.display = 'none';
-        }
-        
         this.updateWordCount({ target: { value: post.excerpt || '' } });
         
         const postModal = document.getElementById('postModal');
@@ -615,24 +527,11 @@ class BlogManager {
         }
         
         this.currentEditIndex = null;
-        
-        // Hide image suggestions when closing modal
-        const suggestionContainer = document.getElementById('imageSuggestions');
-        if (suggestionContainer) {
-            suggestionContainer.style.display = 'none';
-        }
-        
-        // Clear auto-save interval if modal is closed
-        if (this.autoSaveInterval) {
-            clearInterval(this.autoSaveInterval);
-            this.autoSaveInterval = null;
-        }
     }
 
-    // CRITICAL FIX: Enhanced form submit handler with detailed debugging
+    // Form submit handler
     handleSubmit(e) {
         console.log('🚀 HANDLE SUBMIT CALLED!');
-        console.log('Event preventDefault called');
         e.preventDefault();
         
         console.log('📋 Starting form validation...');
@@ -644,10 +543,7 @@ class BlogManager {
         console.log('✅ Form validation passed');
         
         const formData = new FormData(e.target);
-        console.log('📄 FormData created:', formData);
-        
         const imageFile = formData.get('postImage');
-        console.log('🖼️ Image file:', imageFile);
         
         if (imageFile && imageFile.size > 0) {
             console.log('📸 Processing image file...');
@@ -655,7 +551,6 @@ class BlogManager {
             reader.onload = (readerEvent) => {
                 console.log('📸 Image loaded, creating post data...');
                 const postData = this.createPostData(formData, readerEvent.target.result);
-                console.log('📄 Post data created:', postData);
                 
                 if (this.currentEditIndex !== null) {
                     console.log('✏️ Updating existing post...');
@@ -732,14 +627,6 @@ class BlogManager {
             }
         }
         
-        // NO WORD COUNT LIMIT - just check that excerpt exists
-        const excerptField = document.getElementById('postExcerpt');
-        if (excerptField && !excerptField.value.trim()) {
-            console.log('❌ Excerpt is empty');
-            if (errorDiv) errorDiv.textContent = 'Post excerpt is required.';
-            return false;
-        }
-        
         // Image validation for new posts
         if (this.currentEditIndex === null) {
             const imageFile = document.getElementById('postImage')?.files[0];
@@ -798,7 +685,7 @@ class BlogManager {
         
         console.log('✅ Post created successfully');
         
-        // RESTful API Demo - Create post via API
+        // jQuery AJAX API call to create post
         if (window.apiManager) {
             apiManager.createPost({
                 title: postData.title,
@@ -1006,12 +893,6 @@ class BlogManager {
             previewImg.src = imageSrc;
             imagePreview.style.display = 'block';
         }
-        
-        // Hide image suggestions when showing preview
-        const suggestionContainer = document.getElementById('imageSuggestions');
-        if (suggestionContainer) {
-            suggestionContainer.style.display = 'none';
-        }
     }
 
     hideImagePreview() {
@@ -1039,7 +920,6 @@ class BlogManager {
         
         if (counter) {
             counter.textContent = `${wordCount} words`;
-            // Always green - no limits or restrictions
             counter.style.color = '#059669';
         }
     }
@@ -1138,21 +1018,6 @@ class BlogManager {
         });
     }
 
-    async loadFloatingImages() {
-        // Skip Unsplash loading for now to avoid API issues
-        console.log('📸 Loading floating images skipped for stability...');
-    }
-
-    async loadDynamicImagesForPosts() {
-        // Skip dynamic loading for now
-        console.log('🖼️ Dynamic image loading skipped for debugging');
-    }
-
-    setupImageSuggestion() {
-        // Skip for now
-        console.log('💡 Image suggestion setup skipped for debugging');
-    }
-
     formatDate(dateString) {
         try {
             return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -1219,11 +1084,6 @@ class BlogManager {
             this.clearFormDraft();
             this.selectedImageAttribution = null;
             
-            const suggestionContainer = document.getElementById('imageSuggestions');
-            if (suggestionContainer) {
-                suggestionContainer.style.display = 'none';
-            }
-            
             this.showNotification('Form and draft cleared successfully', 'success');
         }
     }
@@ -1241,86 +1101,127 @@ class BlogManager {
     }
 }
 
-// RESTful API Manager (Simplified)
+// RESTful API Manager using jQuery AJAX (ALL CRUD operations)
 class APIManager {
     constructor() {
         this.baseURL = 'https://jsonplaceholder.typicode.com';
     }
 
-    // GET - Fetch posts
+    // GET - Fetch posts using jQuery AJAX
     async fetchPosts() {
-        try {
-            const response = await fetch(`${this.baseURL}/posts`);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const data = await response.json();
-            console.log('API GET - Posts fetched:', data.length);
-            return data.slice(0, 5); // Return first 5 posts
-        } catch (error) {
-            console.error('API GET Error:', error);
-            return [];
-        }
+        return new Promise((resolve, reject) => {
+            $.ajax({
+                url: `${this.baseURL}/posts`,
+                method: 'GET',
+                dataType: 'json',
+                success: (data) => {
+                    console.log('✅ jQuery GET - Posts fetched:', data.length);
+                    resolve(data.slice(0, 5)); // Return first 5 posts
+                },
+                error: (xhr, status, error) => {
+                    console.error('❌ jQuery GET Error:', error);
+                    resolve([]);
+                }
+            });
+        });
     }
 
-    // POST - Create new post
+    // POST - Create new post using jQuery AJAX
     async createPost(postData) {
-        try {
-            const response = await fetch(`${this.baseURL}/posts`, {
+        return new Promise((resolve, reject) => {
+            $.ajax({
+                url: `${this.baseURL}/posts`,
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
+                contentType: 'application/json',
+                data: JSON.stringify(postData),
+                dataType: 'json',
+                success: (data) => {
+                    console.log('✅ jQuery POST - Post created:', data);
+                    resolve(data);
                 },
-                body: JSON.stringify(postData)
+                error: (xhr, status, error) => {
+                    console.error('❌ jQuery POST Error:', error);
+                    resolve(null);
+                }
             });
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const data = await response.json();
-            console.log('API POST - Post created:', data);
-            return data;
-        } catch (error) {
-            console.error('API POST Error:', error);
-            return null;
-        }
+        });
     }
 
-    // PUT - Update post
+    // PUT - Update post using jQuery AJAX
     async updatePost(id, postData) {
-        try {
-            const response = await fetch(`${this.baseURL}/posts/${id}`, {
+        return new Promise((resolve, reject) => {
+            $.ajax({
+                url: `${this.baseURL}/posts/${id}`,
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
+                contentType: 'application/json',
+                data: JSON.stringify(postData),
+                dataType: 'json',
+                success: (data) => {
+                    console.log('✅ jQuery PUT - Post updated:', data);
+                    resolve(data);
                 },
-                body: JSON.stringify(postData)
+                error: (xhr, status, error) => {
+                    console.error('❌ jQuery PUT Error:', error);
+                    reject(new Error(`PUT request failed: ${error}`));
+                }
             });
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const data = await response.json();
-            console.log('API PUT - Post updated:', data);
-            return data;
-        } catch (error) {
-            console.error('API PUT Error:', error);
-            return null;
-        }
+        });
     }
 
-    // DELETE - Delete post
+    // DELETE - Delete post using jQuery AJAX
     async deletePost(id) {
-        try {
-            const response = await fetch(`${this.baseURL}/posts/${id}`, {
-                method: 'DELETE'
+        return new Promise((resolve, reject) => {
+            $.ajax({
+                url: `${this.baseURL}/posts/${id}`,
+                method: 'DELETE',
+                success: () => {
+                    console.log('✅ jQuery DELETE - Post deleted:', id);
+                    resolve(true);
+                },
+                error: (xhr, status, error) => {
+                    console.error('❌ jQuery DELETE Error:', error);
+                    reject(new Error(`DELETE request failed: ${error}`));
+                }
             });
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+        });
+    }
+
+    // Demo all CRUD operations using jQuery AJAX
+    async demonstrateCRUD() {
+        console.log('🎯 Demonstrating jQuery AJAX CRUD Operations...');
+        
+        try {
+            // CREATE (POST)
+            const newPost = await this.createPost({
+                title: 'Test Post via jQuery',
+                body: 'This post was created using jQuery AJAX',
+                userId: 1
+            });
+            console.log('Created:', newPost);
+            
+            // READ (GET)
+            const posts = await this.fetchPosts();
+            console.log('Fetched posts count:', posts.length);
+            
+            // UPDATE (PUT)
+            if (newPost && newPost.id) {
+                const updatedPost = await this.updatePost(newPost.id, {
+                    id: newPost.id,
+                    title: 'Updated Post via jQuery',
+                    body: 'This post was updated using jQuery AJAX',
+                    userId: 1
+                });
+                console.log('Updated:', updatedPost);
+                
+                // DELETE
+                const deleted = await this.deletePost(newPost.id);
+                console.log('Deleted successfully:', deleted);
             }
-            console.log('API DELETE - Post deleted:', id);
-            return true;
+            
+            console.log('✅ jQuery AJAX CRUD demonstration complete!');
+            
         } catch (error) {
-            console.error('API DELETE Error:', error);
-            return false;
+            console.error('❌ CRUD demonstration failed:', error);
         }
     }
 }
@@ -1347,28 +1248,23 @@ function openPostDetail(element, type) {
     }
 }
 
-// Initialize Blog Manager and API with enhanced debugging
-let blogManager, apiManager;
-document.addEventListener('DOMContentLoaded', function() {
-    console.log('🚀 DOM Content Loaded - Starting initialization...');
+// Initialize Blog Manager and API using jQuery
+$(document).ready(function() {
+    console.log('🚀 jQuery Ready - Starting initialization...');
     
     // Initialize managers with error handling
     try {
-        blogManager = new BlogManager();
+        window.blogManager = new BlogManager();
         console.log('✅ BlogManager initialized');
         
-        apiManager = new APIManager();
+        window.apiManager = new APIManager();
         console.log('✅ APIManager initialized');
         
-        // Make blogManager globally available for debugging
-        window.blogManager = blogManager;
-        window.apiManager = apiManager;
-        
-        // Demo RESTful API calls
+        // Demo jQuery AJAX RESTful API calls
         setTimeout(() => {
-            console.log('=== RESTful API DEMO ===');
-            if (apiManager) {
-                apiManager.fetchPosts();
+            console.log('=== jQuery AJAX RESTful API DEMO ===');
+            if (window.apiManager) {
+                window.apiManager.demonstrateCRUD();
             }
         }, 1000);
         
@@ -1377,13 +1273,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Enter key for form submission prevention in text inputs
-    document.addEventListener('keydown', function(e) {
+    $(document).on('keydown', function(e) {
         if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') {
             e.preventDefault();
         }
     });
     
-    console.log('🎉 Initialization complete!');
+    console.log('🎉 jQuery initialization complete!');
 });
 
 // Export for use in other files
